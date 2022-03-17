@@ -1,212 +1,125 @@
-name: Jarvis-OpenWrt-CI
+#========================================================================================================================
+# https://github.com/ophub/amlogic-s9xxx-openwrt
+# Description: Automatically Build OpenWrt for Amlogic s9xxx tv box
+# Cron: min (0 - 59) / hour (0 - 23) / day of month (1 - 31) / month (1 - 12) / day of week (0 - 6)(Sunday - Saturday)
+# Source code repository: https://github.com/coolsnowwolf/lede / Branch: master
+#========================================================================================================================
 
-    on:
-      push:
-        branches: 
-          # master为你需要编译的当前固件的分支
-          - master
-      schedule:
-        - cron: 0 20 * * *
-      # release:
-      #   types: [published]
+name: Build OpenWrtAidan
 
-    jobs:
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      more_settings:
+        description: "More parameter settings"
+        required: false
+        default: ""
+  #schedule:
+    #- cron: '0 17 * * 0'
 
-      build:
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  FEEDS_CONF: router-config/lede-master/feeds.conf.default
+  CONFIG_FILE: router-config/lede-master/.config
+  DIY_P1_SH: router-config/lede-master/diy-part1.sh
+  DIY_P2_SH: router-config/lede-master/diy-part2.sh
+  TZ: Asia/Shanghai
 
-        runs-on: ubuntu-latest
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    if: github.event.repository.owner.id == github.event.sender.id
 
-        steps:
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
 
-          - name: Checkout
-            uses: actions/checkout@master
-            # with中的master为你需要编译的当前固件的分支
-            with:
-              ref: master
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL git.io/ubuntu-2004-openwrt)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "COMPILE_STARTINGTIME=$(date +"%m.%d.%H%M")" >> $GITHUB_ENV
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
 
-          - name: Space cleanup
-            env:
-              DEBIAN_FRONTEND: noninteractive
-            run: |
-              docker rmi docker images -q
-              sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d
-              sudo -E apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell openjdk* mysql* php*
-              sudo -E apt-get update
-              sudo -E apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler
-              sudo -E apt-get -y autoremove --purge
-              sudo -E apt-get clean
-              # sudo mkdir -p -m 777 /mnt/openwrt/bin /mnt/openwrt/build_dir/host /mnt/openwrt/build_dir/hostpkg /mnt/openwrt/dl /mnt/openwrt/feeds /mnt/openwrt/staging_dir
-              # ln -s /mnt/openwrt/bin ./bin
-              # mkdir -p ./build_dir/host && ln -s /mnt/openwrt/build_dir/host ./build_dir/host
-              # mkdir -p ./build_dir/host && ln -s /mnt/openwrt/build_dir/hostpkg ./build_dir/hostpkg
-              # ln -s /mnt/openwrt/dl ./dl
-              # ln -s /mnt/openwrt/feeds ./feeds
-              # ln -s /mnt/openwrt/staging_dir ./staging_dir
-              df -h
-          - name: Update feeds
-            run: |
-              ./scripts/feeds update -a
-              ./scripts/feeds install -a
-          - name: Generate configuration file
-            run: |
-              rm -f ./.config*
-              touch ./.config
-              #
-              # ========================固件定制部分========================
-              # 
-              # 
-              # 如果不对本区块做出任何编辑, 则生成默认配置固件. 
-              # 
-              # 以下为定制化固件选项和说明:
-              #
-              #
-              # 有些插件/选项是默认开启的, 如果想要关闭, 请参照以下示例进行编写:
-              # 
-              #          =========================================
-              #         |  # 取消编译VMware镜像:                   |
-              #         |  cat >> .config <<EOF                   |
-              #         |  # CONFIG_VMDK_IMAGES is not set        |
-              #         |  EOF                                    |
-              #          =========================================
-              #
-              # 
-              # 以下是一些提前准备好的一些插件选项.
-              # 直接取消注释相应代码块即可应用. 不要取消注释代码块上的汉字说明.
-              # 如果不需要代码块里的某一项配置, 只需要删除相应行.
-              #
-              # 如果需要其他插件, 请按照示例自行添加.
-              # 注意, 只需添加依赖链顶端的包. 如果你需要插件 A, 同时 A 依赖 B, 即只需要添加 A.
-              # 
-              # 无论你想要对固件进行怎样的定制, 都需要且只需要修改 EOF 回环内的内容.
-              # 
-              # 编译x64固件:
-              cat >> .config <<EOF
-              CONFIG_TARGET_x86=y
-              CONFIG_TARGET_x86_64=y
-              CONFIG_TARGET_x86_64_Generic=y
-              EOF
-              # 固件压缩, 编译ext4格式固件
-                        # 注意如果选的插件数目多，CONFIG_TARGET_ROOTFS_PARTSIZE要设置大一些
-              cat >> .config <<EOF
-              CONFIG_TARGET_ROOTFS_EXT4FS=y
-              CONFIG_TARGET_IMAGES_GZIP=y
-              CONFIG_TARGET_ROOTFS_PARTSIZE=800
-              EOF
-              # 编译UEFI固件:
-              # cat >> .config <<EOF
-              # CONFIG_EFI_IMAGES=y
-              # EOF
-              # IPv6支持:
-              # cat >> .config <<EOF
-              # CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
-              # CONFIG_PACKAGE_ipv6helper=y
-              # EOF
-              # 多文件系统支持:
-              cat >> .config <<EOF
-              CONFIG_PACKAGE_kmod-fs-nfs=y
-              CONFIG_PACKAGE_kmod-fs-nfs-common=y
-              CONFIG_PACKAGE_kmod-fs-nfs-v3=y
-              CONFIG_PACKAGE_kmod-fs-nfs-v4=y
-              CONFIG_PACKAGE_kmod-fs-ntfs=y
-              CONFIG_PACKAGE_kmod-fs-squashfs=y
-              EOF
-              # USB3.0支持:
-              cat >> .config <<EOF
-              CONFIG_PACKAGE_kmod-usb-ohci=y
-              CONFIG_PACKAGE_kmod-usb-ohci-pci=y
-              CONFIG_PACKAGE_kmod-usb2=y
-              CONFIG_PACKAGE_kmod-usb2-pci=y
-              CONFIG_PACKAGE_kmod-usb3=y
-              EOF
-              # 常用LuCI插件选择, 主要定制passwall与ssr-plus
-              cat >> .config <<EOF
-              CONFIG_PACKAGE_luci-app-adbyby-plus=y
-              CONFIG_PACKAGE_luci-app-aria2=y
-              CONFIG_PACKAGE_luci-app-baidupcs-web=y
-              CONFIG_PACKAGE_luci-app-docker=y
-              CONFIG_PACKAGE_luci-app-frpc=y
-              CONFIG_PACKAGE_luci-app-kodexplorer=y
-              CONFIG_PACKAGE_luci-app-minidlna=y
-              CONFIG_PACKAGE_luci-app-openvpn=y
-              CONFIG_PACKAGE_luci-app-openvpn-server=y
-              CONFIG_PACKAGE_luci-app-passwall=y
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ipt2socks=y
-              # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks is not set
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR=y
-              # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_socks is not set
-              # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_socks is not set
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray=y
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan=y
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Brook=y
-              # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_kcptun is not set
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_haproxy=y
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ChinaDNS_NG=y
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_pdnsd=y
-              CONFIG_PACKAGE_luci-app-passwall_INCLUDE_dns2socks=y
-              # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_v2ray-plugin is not set
-              # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_simple-obfs is not set
-              CONFIG_PACKAGE_luci-app-qbittorrent=y
-              CONFIG_PACKAGE_luci-app-ssr-plus=y
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks=y
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Simple_obfs=y
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_V2ray_plugin=y
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_V2ray=y
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan=y
-              # CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Kcptun is not set
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_ShadowsocksR_Server=y
-              CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_ShadowsocksR_Socks=y
-              CONFIG_PACKAGE_luci-app-ttyd=y
-              CONFIG_PACKAGE_luci-app-v2ray-server=y
-              CONFIG_PACKAGE_luci-app-verysync=y
-              CONFIG_PACKAGE_luci-app-webadmin=y
-              CONFIG_PACKAGE_luci-app-wireguard=y
-              CONFIG_PACKAGE_luci-app-wrtbwmon=y
-              EOF
-              # LuCI主题:
-              cat >> .config <<EOF
-              CONFIG_PACKAGE_luci-theme-argon-dark-mod=y
-              CONFIG_PACKAGE_luci-theme-argon-light-mod=y
-              CONFIG_PACKAGE_luci-theme-material=y
-              CONFIG_PACKAGE_luci-theme-netgear=y
-              EOF
-              # 常用软件包:
-              cat >> .config <<EOF
-              CONFIG_PACKAGE_curl=y
-              CONFIG_PACKAGE_htop=y
-              CONFIG_PACKAGE_nano=y
-              CONFIG_PACKAGE_screen=y
-              CONFIG_PACKAGE_tree=y
-              CONFIG_PACKAGE_vim-fuller=y
-              CONFIG_PACKAGE_wget=y
-              EOF
-              # 取消编译VMware镜像以及镜像填充 (不要删除被缩进的注释符号):
-              # cat >> .config <<EOF
-              # # CONFIG_TARGET_IMAGES_PAD is not set
-              # # CONFIG_VMDK_IMAGES is not set
-              # EOF
-              # 
-              # ========================固件定制部分结束========================
-              # 
-              sed -i 's/^[ \\t]*//g' ./.config
-              make defconfig
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
 
-- name: Package Armvirt as OpenWrt
-  uses: unifreq/openwrt_packit@master
-  env:
-    OPENWRT_ARMVIRT: openwrt/bin/targets/*/*/*.tar.gz
-    PACKAGE_SOC: s905d_s905x3_s922x_vplus_beikeyun_l1pro
-    KERNEL_VERSION_NAME: 5.15.25_5.4.180
-
-- name: Upload OpenWrt Firmware to Release
-  uses: ncipollo/release-action@v1
-  with:
-    tag: openwrt_armvirt_v8_${{ env.PACKAGED_OUTPUTDATE }}
-    artifacts: ${{ env.PACKAGED_OUTPUTPATH }}/*
-    allowUpdates: true
-    token: ${{ secrets.GITHUB_TOKEN }}
-    body: |
-      This is OpenWrt firmware for Armvirt 64
-      * Firmware information
-      Default IP: 192.168.168.236
-      Default username: root
-      Default password: YD123456
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(($(nproc) + 1)) V=s || make -j1 || make -j1 V=s
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +"%m.%d.%H%M")" >> $GITHUB_ENV
+        echo "::set-output name=status::success"
+    - name: Build OpenWrt firmware
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      id: build
+      run: |
+        [ -d openwrt-armvirt ] || mkdir -p openwrt-armvirt
+        cp -f openwrt/bin/targets/*/*/*.tar.gz openwrt-armvirt/ && sync
+        sudo chmod +x make
+        sudo ./make -d ${{ github.event.inputs.more_settings }}
+        [ -d ipk ] || mkdir -p ipk
+        cp -rf $(find openwrt/bin/packages/ -type f -name "*.ipk") ipk/ && sync
+        sudo tar -czf ipk.tar.gz ipk && sudo mv -f ipk.tar.gz out/ && sync
+        echo "PACKAGED_OUTPUTPATH=${PWD}/out" >> $GITHUB_ENV
+        echo "PACKAGED_OUTPUTDATE=$(date +"%m.%d.%H%M")" >> $GITHUB_ENV
+        echo "::set-output name=status::success"
+    - name: Upload OpenWrt Firmware to Release
+      uses: ncipollo/release-action@v1
+      if: steps.build.outputs.status == 'success' && !cancelled()
+      with:
+        tag: openwrt_s9xxx_lede_${{ env.PACKAGED_OUTPUTDATE }}
+        artifacts: ${{ env.PACKAGED_OUTPUTPATH }}/*
+        allowUpdates: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+        body: |
+          This is OpenWrt firmware for Amlogic s9xxx tv box
+          * Firmware information
+          Default IP: 192.168.168.236
+          Default username: root
+          Default password: YD123456
+          Default WIFI name: OpenWrt
+          Default WIFI password: none
+          Install to EMMC: Login to Aidan-Openwrt
